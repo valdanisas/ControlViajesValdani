@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Truck body -->
+    <path
+        android:fillColor="#0f172a"
+        android:pathData="M8,44 L72,44 Q76,44 76,48 L76,78 Q76,82 72,82 L8,82 Q4,82 4,78 L4,48 Q4,44 8,44 Z"/>
+
+    <!-- Cab -->
+    <path
+        android:fillColor="#0f172a"
+        android:pathData="M78,54 L102,54 Q106,54 106,58 L106,82 Q106,86 102,86 L78,86 Q74,86 74,82 L74,58 Q74,54 78,54 Z"/>
+
+    <!-- Window -->
+    <path
+        android:fillColor="#f59e0b"
+        android:fillAlpha="0.55"
+        android:pathData="M80,58 L100,58 Q103,58 103,61 L103,76 Q103,79 100,79 L80,79 Q77,79 77,76 L77,61 Q77,58 80,58 Z"/>
+
+    <!-- Wheels -->
+    <path android:fillColor="#0f172a" android:pathData="M26,82 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"/>
+    <path android:fillColor="#f59e0b" android:pathData="M26,82 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0"/>
+    <path android:fillColor="#0f172a" android:pathData="M60,82 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"/>
+    <path android:fillColor="#f59e0b" android:pathData="M60,82 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0"/>
+    <path android:fillColor="#0f172a" android:pathData="M92,86 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"/>
+    <path android:fillColor="#f59e0b" android:pathData="M92,86 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0"/>
+
+    <!-- CM text in cargo -->
+    <path android:fillColor="#f59e0b"
+        android:pathData="M22,72 L22,52 Q22,49 19,49 Q16,49 16,52 L16,72 Q16,75 19,75 Q22,75 22,72 Z
+                          M16,62 L22,62 L22,59 L16,59 Z
+                          M36,72 L36,52 Q36,49 33,49 Q30,49 28,52 L28,72 Q30,75 33,75 Q36,75 36,72 Z
+                          M28,52 Q28,49 33,49 Q36,49 36,52 L36,55 L28,55 Z
+                          M28,72 Q28,75 33,75 Q36,75 36,72 L36,69 L28,69 Z"/>
+
+</vector>

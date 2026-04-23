@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Ctrl Material">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#f59e0b">
+  <title>Control de Material</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.svg">
+  <link rel="icon" type="image/svg+xml" href="icon-192.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html, body { height:100%; background:#080f1a; overflow-x:hidden; }
+    body { font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif; color:#f8fafc; }
+    input[type="date"]   { color-scheme:dark; }
+    ::-webkit-scrollbar  { display:none; }
+    *                    { scrollbar-width:none; }
+    button               { -webkit-user-select:none; user-select:none; touch-action:manipulation; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+const XLSX_LIB = window.XLSX;
+
+// ── Detect environment ──
+// true = running inside our native Android APK
+// false = running as PWA in browser
+const IS_ANDROID = (typeof Android !== 'undefined') && Android.isNativeApp();
+
+/* ── Storage ── */
+const ls = {
+  get: (k,d) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):d; } catch { return d; } },
+  set: (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+/* ── Defaults ── */
+const DEF_LOAD  = ["Guayabito","Agua fría","David","Raul"];
+const DEF_UNLOAD= ["Playa Ventura","Acopio excenover","Relleno sanitario","Vía veredas","Planta gambito","Planta aguas negras","La terraza"];
+const EV = { placa:"",volumen:"",fechaSoat:"",fechaTecno:"",rce:"",propietario:"",cedulaPropietario:"",asociacion:"",conductor:"" };
+const ET = { placa:"",sitioOrigen:"",sitioDescargue:"",volumen:"",asociacion:"",conductor:"",timestamp:"" };
+
+/* ── Colors ── */
+const C = {
+  bg:"#080f1a", card:"#1a2540", border:"#253356",
+  accent:"#f59e0b", green:"#10b981",
+  muted:"#94a3b8", dim:"#475569", dark:"#0f172a"
+};
+
+/* ── Small components ── */
+const Inp = ({val,onChange,type="text",ph=""}) => (
+  <input type={type} value={val} placeholder={ph} onChange={onChange}
+    style={{width:"100%",padding:"13px 14px",background:"#1e293b",border:`1.5px solid ${C.border}`,
+      borderRadius:8,color:"#f8fafc",fontSize:17,fontFamily:"inherit",outline:"none"}} />
+);
+
+const PlacaBadge = ({txt,size=18}) => (
+  <span style={{background:C.accent,color:C.dark,borderRadius:6,padding:"2px 9px",
+    fontWeight:900,fontSize:size,display:"inline-block",letterSpacing:1}}>
+    {txt}
+  </span>
+);
+
+const SiteBtn = ({label,active,color,onClick}) => (
+  <button onClick={onClick}
+    style={{padding:"14px 6px",background:active?color:"#1a2540",
+      border:`2px solid ${active?color:C.border}`,borderRadius:10,
+      color:active?(color===C.accent?C.dark:"#fff"):"#e2e8f0",
+      fontFamily:"inherit",fontWeight:700,fontSize:13,cursor:"pointer",
+      lineHeight:1.2,transition:"background .12s,border-color .12s"}}>
+    {label}
+  </button>
+);
+
+/* ════════════════════════════════════════
+   MAIN APP
+════════════════════════════════════════ */
+function App() {
+  const [planillero, setPlanillero] = useState(()=>ls.get("planillero",""));
+  const [pinInput,   setPinInput]   = useState("");
+  const [editPlan,   setEditPlan]   = useState(false);
+  const [tab,        setTab]        = useState("trips");
+  const [vehicles,   setVehicles]   = useState(()=>ls.get("vehicles",[]));
+  const [trips,      setTrips]      = useState(()=>ls.get("trips",[]));
+  const [loadSites,  setLoadSites]  = useState(()=>ls.get("loadSites",DEF_LOAD));
+  const [unloadSites,setUnloadSites]= useState(()=>ls.get("unloadSites",DEF_UNLOAD));
+  const [vForm,      setVF]         = useState(EV);
+  const [tripForm,   setTF]         = useState(ET);
+  const [tripActive, setTripActive] = useState(false);
+  const [newLoad,    setNewLoad]    = useState("");
+  const [newUnload,  setNewUnload]  = useState("");
+  const [toast,      setToast]      = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [sharing,    setSharing]    = useState(false);
+
+  const showToast = (msg,ok=true) => {
+    setToast({msg,ok});
+    setTimeout(()=>setToast(null),3000);
+  };
+
+  /* Persist helpers */
+  const upV  = d => { setVehicles(d);    ls.set("vehicles",d); };
+  const upT  = d => { setTrips(d);       ls.set("trips",d); };
+  const upLS = d => { setLoadSites(d);   ls.set("loadSites",d); };
+  const upUS = d => { setUnloadSites(d); ls.set("unloadSites",d); };
+
+  /* ─ Planillero ─ */
+  const savePlanillero = () => {
+    const n = pinInput.trim();
+    if (!n) return;
+    setPlanillero(n); ls.set("planillero",n);
+    setPinInput(""); setEditPlan(false);
+  };
+
+  /* ─ Vehicles ─ */
+  const saveVehicle = () => {
+    if (!vForm.placa.trim()) { showToast("Ingrese la placa",false); return; }
+    const p = vForm.placa.toUpperCase().trim();
+    const entry = {...vForm,placa:p};
+    const idx = vehicles.findIndex(v=>v.placa===p);
+    upV(idx>=0 ? vehicles.map((v,i)=>i===idx?entry:v) : [...vehicles,entry]);
+    setVF(EV);
+    showToast(idx>=0?"Vehículo actualizado ✓":"Vehículo guardado ✓");
+  };
+
+  /* ─ Trips ─ */
+  const selectPlate = placa => {
+    const v = vehicles.find(x=>x.placa===placa);
+    if (!v) return;
+    const ts = new Date().toLocaleString("es-CO",{
+      day:"2-digit",month:"2-digit",year:"numeric",
+      hour:"2-digit",minute:"2-digit",second:"2-digit"
+    });
+    setTF({placa,sitioOrigen:"",sitioDescargue:"",
+      volumen:v.volumen,asociacion:v.asociacion,conductor:v.conductor,timestamp:ts});
+    setTripActive(true);
+  };
+
+  const saveTrip = () => {
+    if (!tripForm.sitioOrigen)    { showToast("Seleccione sitio de cargue",false); return; }
+    if (!tripForm.sitioDescargue) { showToast("Seleccione sitio de descargue",false); return; }
+    upT([...trips, {...tripForm, planillero, id:Date.now()}]);
+    setTF(ET); setTripActive(false);
+    showToast("Viaje registrado ✓");
+  };
+
+  /* ─ Export & Share ─ */
+  const handleExport = async () => {
+    if (trips.length===0) { showToast("No hay registros para exportar",false); return; }
+    setSharing(true);
+    try {
+      const now    = new Date();
+      const fecha  = now.toLocaleDateString("es-CO").replace(/\//g,"-");
+      const hora   = now.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"})
+                        .replace(/:/g,"-").replace(" ","").replace("a.m.","am").replace("p.m.","pm");
+      const nombre = `Viajes_${fecha}_${hora}_${planillero||"datos"}.xlsx`;
+
+      /* Build workbook */
+      const wsT = XLSX_LIB.utils.json_to_sheet(trips.map(t=>({
+        "Fecha y Hora"   :t.timestamp,
+        "Placa"          :t.placa,
+        "Conductor"      :t.conductor,
+        "Asociación"     :t.asociacion,
+        "Volumen (m³)"   :t.volumen,
+        "Sitio Cargue"   :t.sitioOrigen,
+        "Sitio Descargue":t.sitioDescargue,
+        "Planillero"     :t.planillero||planillero
+      })));
+      const wsV = XLSX_LIB.utils.json_to_sheet(vehicles.map(v=>({
+        "Placa":v.placa,"Conductor":v.conductor,"Asociación":v.asociacion,
+        "Volumen (m³)":v.volumen,"Propietario":v.propietario,"Cédula":v.cedulaPropietario,
+        "SOAT":v.fechaSoat,"Tecnomecánica":v.fechaTecno,"RCE":v.rce
+      })));
+      const wb = XLSX_LIB.utils.book_new();
+      XLSX_LIB.utils.book_append_sheet(wb, wsT, "Viajes");
+      XLSX_LIB.utils.book_append_sheet(wb, wsV, "Vehículos");
+
+      const out = XLSX_LIB.write(wb, {bookType:"xlsx",type:"array"});
+
+      /* ─────────────────────────────────────────────
+         SHARE STRATEGY:
+         1. Native Android app → use JavascriptInterface (no browser needed)
+         2. Mobile browser PWA → Web Share API (opens share sheet)
+         3. Desktop browser   → download file
+      ───────────────────────────────────────────── */
+
+      if (IS_ANDROID) {
+        /* Convert Uint8Array → base64 string and hand off to Kotlin */
+        const bytes  = new Uint8Array(out);
+        let binary   = "";
+        const chunk  = 8192;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        const b64 = btoa(binary);
+        Android.shareFile(nombre, b64);
+        setSharing(false);
+        return;
+      }
+
+      const blob = new Blob([out], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+      const file = new File([blob], nombre, {type:blob.type});
+
+      if (navigator.canShare && navigator.canShare({files:[file]})) {
+        await navigator.share({
+          files:[file],
+          title:"Registros de Viajes",
+          text:`Viajes ${fecha} · Planillero: ${planillero}`
+        });
+        showToast("¡Archivo compartido! ✓");
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement("a");
+        a.href=url; a.download=nombre; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url),2000);
+        showToast("Archivo descargado ✓");
+      }
+
+    } catch(e) {
+      if (e.name!=="AbortError") showToast("Error al exportar",false);
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const today   = new Date().toLocaleDateString("es-CO");
+  const todayT  = trips.filter(t=>t.timestamp&&t.timestamp.includes(today));
+
+  /* ════════════════════════════════
+     PANTALLA INICIAL: PLANILLERO
+  ════════════════════════════════ */
+  if (!planillero) return (
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:360,textAlign:"center"}}>
+        <div style={{width:100,height:100,borderRadius:28,background:C.accent,margin:"0 auto 20px",
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:55}}>⛏️</div>
+        <div style={{fontSize:30,fontWeight:900,color:C.accent,letterSpacing:1,marginBottom:4}}>CONTROL DE MATERIAL</div>
+        <div style={{fontSize:15,color:C.muted,marginBottom:32}}>Ingrese su nombre para iniciar</div>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:"1.2px",marginBottom:8,textAlign:"left"}}>
+          NOMBRE DEL PLANILLERO
+        </div>
+        <input value={pinInput} onChange={e=>setPinInput(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&savePlanillero()}
+          placeholder="Nombre completo…" autoFocus
+          style={{width:"100%",padding:16,background:C.card,border:`2px solid ${C.accent}`,borderRadius:10,
+            color:"#f8fafc",fontSize:18,fontFamily:"inherit",outline:"none",marginBottom:14}} />
+        <button onClick={savePlanillero}
+          style={{width:"100%",padding:18,background:C.accent,color:C.dark,border:"none",borderRadius:10,
+            fontFamily:"inherit",fontWeight:900,fontSize:18,cursor:"pointer",letterSpacing:.5}}>
+          INICIAR SESIÓN →
+        </button>
+      </div>
+    </div>
+  );
+
+  /* ════════════════════════════════
+     APP PRINCIPAL
+  ════════════════════════════════ */
+  return (
+    <div style={{background:C.bg,minHeight:"100vh",paddingBottom:70}}>
+
+      {/* ── HEADER ── */}
+      <div style={{background:"linear-gradient(135deg,#b45309,#f59e0b)",padding:"12px 14px",
+        display:"flex",justifyContent:"space-between",alignItems:"center",
+        position:"sticky",top:0,zIndex:50}}>
+        <div>
+          <div style={{fontSize:19,fontWeight:900,color:C.dark,letterSpacing:1}}>⛏️ CTRL MATERIAL</div>
+          <div style={{fontSize:11,color:"#78350f",fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+            📋 {planillero.toUpperCase()}
+            <button onClick={()=>{setPinInput("");setEditPlan(true);}}
+              style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:0}}>✏️</button>
+          </div>
+        </div>
+        <button onClick={handleExport} disabled={sharing}
+          style={{background:C.dark,color:C.accent,border:`1.5px solid ${C.accent}`,borderRadius:9,
+            padding:"10px 13px",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit",
+            whiteSpace:"nowrap",opacity:sharing?.6:1}}>
+          {sharing?"…":"⬇ EXCEL / WA"}
+        </button>
+      </div>
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div style={{position:"fixed",top:66,left:"50%",transform:"translateX(-50%)",zIndex:999,
+          background:toast.ok?"#064e3b":"#7f1d1d",color:toast.ok?"#6ee7b7":"#fca5a5",
+          padding:"12px 24px",borderRadius:10,fontWeight:700,fontSize:14,
+          whiteSpace:"nowrap",boxShadow:"0 4px 24px #0009"}}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* ── MODAL: Editar planillero ── */}
+      {editPlan && (
+        <div style={{position:"fixed",inset:0,background:"#000b",zIndex:900,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:C.card,borderRadius:14,padding:24,width:"100%",
+            maxWidth:320,border:`2px solid ${C.accent}`}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.accent,marginBottom:14}}>CAMBIAR PLANILLERO</div>
+            <input value={pinInput} onChange={e=>setPinInput(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&savePlanillero()}
+              placeholder={planillero} autoFocus
+              style={{width:"100%",padding:13,background:"#0f172a",border:`1.5px solid ${C.accent}`,
+                borderRadius:8,color:"#f8fafc",fontSize:16,fontFamily:"inherit",outline:"none",marginBottom:14}} />
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setEditPlan(false);setPinInput("");}}
+                style={{flex:1,padding:13,background:"#1e293b",color:C.muted,border:"none",
+                  borderRadius:8,fontFamily:"inherit",fontWeight:700,fontSize:14,cursor:"pointer"}}>Cancelar</button>
+              <button onClick={savePlanillero}
+                style={{flex:2,padding:13,background:C.accent,color:C.dark,border:"none",
+                  borderRadius:8,fontFamily:"inherit",fontWeight:800,fontSize:14,cursor:"pointer"}}>GUARDAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: Confirm Delete ── */}
+      {confirmDel && (
+        <div style={{position:"fixed",inset:0,background:"#000b",zIndex:900,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:C.card,borderRadius:14,padding:24,width:"100%",
+            maxWidth:300,textAlign:"center",border:"2px solid #ef4444"}}>
+            <div style={{fontSize:15,fontWeight:700,marginBottom:10}}>¿Eliminar vehículo?</div>
+            <PlacaBadge txt={confirmDel} size={20} />
+            <div style={{display:"flex",gap:10,marginTop:18}}>
+              <button onClick={()=>setConfirmDel(null)}
+                style={{flex:1,padding:13,background:"#1e293b",color:C.muted,border:"1px solid #334155",
+                  borderRadius:8,fontFamily:"inherit",fontWeight:700,fontSize:14,cursor:"pointer"}}>Cancelar</button>
+              <button onClick={()=>{upV(vehicles.filter(v=>v.placa!==confirmDel));setConfirmDel(null);showToast("Eliminado");}}
+                style={{flex:1,padding:13,background:"#ef4444",color:"#fff",border:"none",
+                  borderRadius:8,fontFamily:"inherit",fontWeight:800,fontSize:14,cursor:"pointer"}}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{padding:"12px 12px 0",maxWidth:520,margin:"0 auto"}}>
+
+        {/* ══ TAB: VIAJES ══ */}
+        {tab==="trips" && (
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:19,fontWeight:800,color:C.accent}}>MÓDULO DE TRABAJO</div>
+              <div style={{fontSize:11,color:C.dim}}>
+                HOY&nbsp;<span style={{background:todayT.length>0?C.accent:"#334155",
+                  color:todayT.length>0?C.dark:C.muted,borderRadius:20,padding:"2px 9px",
+                  fontSize:11,fontWeight:800}}>{todayT.length}</span>
+              </div>
+            </div>
+
+            {!tripActive ? (
+              <>
+                <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:"1px",marginBottom:10}}>
+                  TOQUE LA PLACA DEL VEHÍCULO
+                </div>
+                {vehicles.length===0 ? (
+                  <div style={{background:C.card,borderRadius:12,padding:32,textAlign:"center",
+                    color:C.dim,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:44}}>🚛</div>
+                    <div style={{marginTop:10,fontWeight:600,fontSize:15}}>Sin vehículos registrados</div>
+                    <button onClick={()=>setTab("vehicles")}
+                      style={{marginTop:14,padding:"11px 22px",background:C.accent,color:C.dark,
+                        border:"none",borderRadius:8,fontFamily:"inherit",fontWeight:800,fontSize:14,cursor:"pointer"}}>
+                      + Registrar vehículo
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    {vehicles.map(v=>(
+                      <button key={v.placa} onClick={()=>selectPlate(v.placa)}
+                        style={{padding:"16px 12px",background:C.card,border:`2px solid ${C.border}`,
+                          borderRadius:12,color:"#f8fafc",fontFamily:"inherit",cursor:"pointer",textAlign:"left"}}>
+                        <div style={{fontSize:22,fontWeight:900,color:C.accent}}>{v.placa}</div>
+                        <div style={{fontSize:12,color:C.muted,marginTop:4,lineHeight:1.4}}>
+                          👤 {v.conductor||"—"}<br/>
+                          <span style={{fontSize:11}}>📦 {v.volumen||"—"}m³ · 🏢 {(v.asociacion||"").slice(0,12)}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {todayT.length>0 && (
+                  <div style={{marginTop:18}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:"1px",marginBottom:8}}>
+                      ÚLTIMOS VIAJES HOY
+                    </div>
+                    {[...todayT].reverse().slice(0,4).map(t=>(
+                      <div key={t.id} style={{background:C.card,borderRadius:10,padding:"10px 13px",
+                        marginBottom:6,border:`1px solid ${C.border}`,display:"flex",
+                        justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <PlacaBadge txt={t.placa} size={14} />
+                          <span style={{fontSize:12,color:C.muted,marginLeft:8}}>{t.conductor}</span>
+                          <div style={{fontSize:12,color:C.dim,marginTop:3}}>
+                            <span style={{color:"#93c5fd"}}>{t.sitioOrigen}</span>
+                            <span style={{color:C.dim}}> → </span>
+                            <span style={{color:"#6ee7b7"}}>{t.sitioDescargue}</span>
+                          </div>
+                        </div>
+                        <div style={{fontSize:10,color:C.dim}}>
+                          {(t.timestamp||"").split(" ")[1]||""}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── TRIP FORM ── */
+              <>
+                <div style={{background:"#0d2137",border:`1.5px solid ${C.accent}`,borderRadius:12,
+                  padding:"12px 14px",marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div>
+                      <PlacaBadge txt={tripForm.placa} size={22} />
+                      <div style={{fontSize:14,color:"#cbd5e1",marginTop:7}}>
+                        👤 <strong>{tripForm.conductor||"—"}</strong>
+                      </div>
+                      <div style={{fontSize:12,color:C.muted}}>
+                        🏢 {tripForm.asociacion||"—"} · 📦 {tripForm.volumen||"—"}m³
+                      </div>
+                    </div>
+                    <button onClick={()=>{setTripActive(false);setTF(ET);}}
+                      style={{background:"#1e293b",border:"none",color:C.dim,borderRadius:8,
+                        padding:"8px 11px",cursor:"pointer",fontSize:18}}>✕</button>
+                  </div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:8,borderTop:"1px solid #1e3a5f",paddingTop:6}}>
+                    ⏱ INICIO: {tripForm.timestamp}
+                  </div>
+                </div>
+
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:"1.2px",marginBottom:8}}>
+                  📍 SITIO DE CARGUE
+                  {tripForm.sitioOrigen&&<span style={{color:C.accent,fontWeight:900}}> · {tripForm.sitioOrigen}</span>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+                  {loadSites.map(s=>(
+                    <SiteBtn key={s} label={s} active={tripForm.sitioOrigen===s} color={C.accent}
+                      onClick={()=>setTF(p=>({...p,sitioOrigen:s}))} />
+                  ))}
+                </div>
+
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:"1.2px",marginBottom:8}}>
+                  🏁 SITIO DE DESCARGUE
+                  {tripForm.sitioDescargue&&<span style={{color:C.green,fontWeight:900}}> · {tripForm.sitioDescargue}</span>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                  {unloadSites.map(s=>(
+                    <SiteBtn key={s} label={s} active={tripForm.sitioDescargue===s} color={C.green}
+                      onClick={()=>setTF(p=>({...p,sitioDescargue:s}))} />
+                  ))}
+                </div>
+
+                <button onClick={saveTrip}
+                  style={{width:"100%",padding:18,
+                    background:(tripForm.sitioOrigen&&tripForm.sitioDescargue)?C.accent:"#1e293b",
+                    color:(tripForm.sitioOrigen&&tripForm.sitioDescargue)?C.dark:"#475569",
+                    border:"none",borderRadius:10,fontFamily:"inherit",fontWeight:900,
+                    fontSize:18,cursor:"pointer",letterSpacing:.5}}>
+                  ✅ REGISTRAR VIAJE
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ══ TAB: VEHÍCULOS ══ */}
+        {tab==="vehicles" && (
+          <div>
+            <div style={{fontSize:19,fontWeight:800,color:C.accent,marginBottom:14}}>
+              REGISTRO DE VEHÍCULO
+            </div>
+            {[
+              {k:"placa",             l:"PLACA",              t:"text",   p:"Ej: ABC-123"},
+              {k:"volumen",           l:"VOLUMEN (m³)",       t:"number", p:"Ej: 8.5"},
+              {k:"fechaSoat",         l:"VENCIMIENTO SOAT",  t:"date"},
+              {k:"fechaTecno",        l:"TECNOMECÁNICA",      t:"date"},
+              {k:"rce",              l:"RCE / SEGURO",       t:"text",   p:"No. póliza"},
+              {k:"propietario",      l:"PROPIETARIO",        t:"text",   p:"Nombre completo"},
+              {k:"cedulaPropietario",l:"CÉDULA PROPIETARIO", t:"number", p:"No. cédula"},
+              {k:"asociacion",       l:"ASOCIACIÓN",         t:"text",   p:"Nombre asociación"},
+              {k:"conductor",        l:"CONDUCTOR",          t:"text",   p:"Nombre conductor"},
+            ].map(f=>(
+              <div key={f.k} style={{marginBottom:11}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:"1.2px",marginBottom:4}}>{f.l}</div>
+                <Inp val={vForm[f.k]} type={f.t} ph={f.p||""}
+                  onChange={e=>setVF(p=>({...p,[f.k]:e.target.value}))} />
+              </div>
+            ))}
+            <button onClick={saveVehicle}
+              style={{width:"100%",padding:17,background:C.accent,color:C.dark,border:"none",
+                borderRadius:10,fontFamily:"inherit",fontWeight:900,fontSize:17,cursor:"pointer",marginTop:6}}>
+              💾 GUARDAR VEHÍCULO
+            </button>
+
+            {vehicles.length>0 && (
+              <div style={{marginTop:22}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.dim,letterSpacing:"1px",marginBottom:10}}>
+                  VEHÍCULOS REGISTRADOS ({vehicles.length})
+                </div>
+                {vehicles.map(v=>(
+                  <div key={v.placa} style={{background:C.card,borderRadius:12,padding:14,
+                    marginBottom:8,border:`1px solid ${C.border}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div>
+                        <PlacaBadge txt={v.placa} size={18} />
+                        <div style={{fontSize:14,color:"#cbd5e1",marginTop:7}}>👤 {v.conductor||"—"}</div>
+                        <div style={{fontSize:12,color:C.dim}}>🏢 {v.asociacion||"—"} · 📦 {v.volumen||"—"}m³</div>
+                        <div style={{fontSize:11,color:"#334155",marginTop:4}}>
+                          SOAT: {v.fechaSoat||"—"} · Tecno: {v.fechaTecno||"—"}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        <button onClick={()=>{setVF(v);window.scrollTo(0,0);}}
+                          style={{padding:"9px 13px",background:"#253356",color:"#93c5fd",border:"none",
+                            borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:14}}>✏️</button>
+                        <button onClick={()=>setConfirmDel(v.placa)}
+                          style={{padding:"9px 13px",background:"#3b0f0f",color:"#fca5a5",border:"none",
+                            borderRadius:7,cursor:"pointer",fontWeight:700,fontSize:14}}>🗑️</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ TAB: SITIOS ══ */}
+        {tab==="sites" && (
+          <div>
+            <div style={{fontSize:19,fontWeight:800,color:C.accent,marginBottom:14}}>GESTIÓN DE SITIOS</div>
+
+            <div style={{marginBottom:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.accent,letterSpacing:"1px",whiteSpace:"nowrap"}}>📍 SITIOS DE CARGUE</div>
+                <div style={{flex:1,height:1,background:C.border}}/>
+              </div>
+              {loadSites.map((s,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  background:C.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:`1px solid ${C.border}`}}>
+                  <span style={{fontWeight:700,fontSize:15}}>{s}</span>
+                  <button onClick={()=>upLS(loadSites.filter((_,j)=>j!==i))}
+                    style={{background:"#3b0f0f",color:"#fca5a5",border:"none",borderRadius:6,
+                      padding:"7px 13px",cursor:"pointer",fontWeight:700,fontSize:13}}>✕</button>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <input value={newLoad} onChange={e=>setNewLoad(e.target.value)}
+                  placeholder="Agregar sitio de cargue…"
+                  onKeyDown={e=>{if(e.key==="Enter"&&newLoad.trim()){upLS([...loadSites,newLoad.trim()]);setNewLoad("");}}}
+                  style={{flex:1,padding:"12px 14px",background:C.card,border:`1.5px solid ${C.border}`,
+                    borderRadius:8,color:"#f8fafc",fontSize:15,fontFamily:"inherit",outline:"none"}} />
+                <button onClick={()=>{if(newLoad.trim()){upLS([...loadSites,newLoad.trim()]);setNewLoad("");}}}
+                  style={{padding:"12px 20px",background:C.accent,color:C.dark,border:"none",
+                    borderRadius:8,fontWeight:900,fontSize:22,cursor:"pointer"}}>+</button>
+              </div>
+            </div>
+
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.green,letterSpacing:"1px",whiteSpace:"nowrap"}}>🏁 SITIOS DE DESCARGUE</div>
+                <div style={{flex:1,height:1,background:C.border}}/>
+              </div>
+              {unloadSites.map((s,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                  background:C.card,borderRadius:8,padding:"12px 14px",marginBottom:6,border:`1px solid ${C.border}`}}>
+                  <span style={{fontWeight:700,fontSize:15}}>{s}</span>
+                  <button onClick={()=>upUS(unloadSites.filter((_,j)=>j!==i))}
+                    style={{background:"#3b0f0f",color:"#fca5a5",border:"none",borderRadius:6,
+                      padding:"7px 13px",cursor:"pointer",fontWeight:700,fontSize:13}}>✕</button>
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <input value={newUnload} onChange={e=>setNewUnload(e.target.value)}
+                  placeholder="Agregar sitio de descargue…"
+                  onKeyDown={e=>{if(e.key==="Enter"&&newUnload.trim()){upUS([...unloadSites,newUnload.trim()]);setNewUnload("");}}}
+                  style={{flex:1,padding:"12px 14px",background:C.card,border:`1.5px solid ${C.border}`,
+                    borderRadius:8,color:"#f8fafc",fontSize:15,fontFamily:"inherit",outline:"none"}} />
+                <button onClick={()=>{if(newUnload.trim()){upUS([...unloadSites,newUnload.trim()]);setNewUnload("");}}}
+                  style={{padding:"12px 20px",background:C.green,color:"#fff",border:"none",
+                    borderRadius:8,fontWeight:900,fontSize:22,cursor:"pointer"}}>+</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ TAB: HISTORIAL ══ */}
+        {tab==="records" && (
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontSize:19,fontWeight:800,color:C.accent}}>HISTORIAL</div>
+              <button onClick={handleExport} disabled={sharing}
+                style={{padding:"10px 16px",background:C.accent,color:C.dark,border:"none",
+                  borderRadius:8,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit",opacity:sharing?.6:1}}>
+                ⬇ EXCEL / WA
+              </button>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+              {[
+                {l:"VIAJES HOY",v:todayT.length,  col:C.accent},
+                {l:"TOTAL",     v:trips.length,    col:"#60a5fa"},
+                {l:"VEHÍCULOS", v:vehicles.length, col:"#a78bfa"},
+              ].map(s=>(
+                <div key={s.l} style={{background:C.card,borderRadius:10,padding:12,
+                  textAlign:"center",border:`1.5px solid ${s.col}22`}}>
+                  <div style={{fontSize:28,fontWeight:900,color:s.col}}>{s.v}</div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.dim,letterSpacing:"1px"}}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+
+            {trips.length===0 ? (
+              <div style={{textAlign:"center",color:"#334155",padding:44,fontSize:16}}>Sin registros</div>
+            ) : (
+              [...trips].reverse().map(t=>(
+                <div key={t.id} style={{background:C.card,borderRadius:10,padding:13,
+                  marginBottom:8,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <PlacaBadge txt={t.placa} size={15} />
+                      <span style={{fontSize:12,color:C.muted}}>👤 {t.conductor}</span>
+                    </div>
+                    <div style={{fontSize:10,color:C.dim,textAlign:"right",flexShrink:0,marginLeft:8}}>
+                      {t.timestamp}
+                    </div>
+                  </div>
+                  <div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <span style={{background:"#1e3a5f",color:"#93c5fd",borderRadius:6,
+                      padding:"3px 8px",fontSize:12,fontWeight:600}}>📍 {t.sitioOrigen}</span>
+                    <span style={{color:C.dim,fontSize:12,alignSelf:"center"}}>→</span>
+                    <span style={{background:"#064e3b",color:"#6ee7b7",borderRadius:6,
+                      padding:"3px 8px",fontSize:12,fontWeight:600}}>🏁 {t.sitioDescargue}</span>
+                  </div>
+                  <div style={{fontSize:11,color:C.dim,marginTop:5}}>
+                    🏢 {t.asociacion||"—"} · 📦 {t.volumen||"—"}m³ · 📋 {t.planillero||planillero}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── TAB BAR ── */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,display:"flex",
+        background:"#0a1628",borderTop:"2px solid #1e293b",zIndex:100}}>
+        {[
+          {id:"trips",    icon:"📋",label:"VIAJES"},
+          {id:"vehicles", icon:"🚛",label:"VEHÍCULOS"},
+          {id:"sites",    icon:"📍",label:"SITIOS"},
+          {id:"records",  icon:"📊",label:"HISTORIAL"},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{flex:1,padding:"10px 4px 9px",background:tab===t.id?C.accent:"transparent",
+              color:tab===t.id?C.dark:"#475569",border:"none",fontFamily:"inherit",
+              fontWeight:700,fontSize:10,cursor:"pointer",letterSpacing:"0.5px",
+              display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+            <span style={{fontSize:20}}>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<!-- Service worker only in browser/PWA mode, not needed inside Android app -->
+<script>
+if (!window.Android && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
